@@ -7,13 +7,7 @@ import {
   expressions,
   styleDebuggingInformation,
 } from "./deps.ts";
-import {
-  EmptyDir,
-  EnsureDir,
-  Remove,
-  Symlink as FsSymlink,
-  WriteTextFile,
-} from "./deps.ts";
+import { EmptyDir, EnsureDir, EnsureNot, WriteTextFile } from "./deps.ts";
 import { Colors, join } from "./deps.ts";
 
 /**
@@ -72,6 +66,21 @@ export type OutFsPath = {
 };
 
 /**
+ * Create an absolute path in the OutFs.
+ */
+export function absoluteOutFsPath(components: string[]): OutFsPath {
+  return { relativity: -1, components };
+}
+
+/**
+ * Create a relative path in the OutFs. The optional second argument is the
+ * number of `..` at the start, defaulting to zero.
+ */
+export function relativeOutFsPath(components: string[], up = 0): OutFsPath {
+  return { relativity: up, components };
+}
+
+/**
  * Renders an {@linkcode OutFsPath} into a unix-style path string.
  *
  * Some examples:
@@ -86,14 +95,15 @@ export function renderOutFsPath(p: OutFsPath): string {
     return ".";
   }
 
+  if (p.relativity === -1) {
+    return `/${p.components.join("/")}`;
+  }
+
   const dots: string[] = new Array(p.relativity);
   dots.fill("..");
   const parents = dots.join("/");
 
-  const prefix = p.relativity === -1 ? "/" : parents;
-  return `${prefix}${p.components.length > 0 ? "/" : ""}${
-    p.components.join("/")
-  }`;
+  return `${parents}${p.relativity > 0 && p.components.length > 0 ? "/" : ""}${p.components.join("/")}`;
 }
 
 /**
@@ -115,7 +125,7 @@ export function cloneOutFsPath(p: OutFsPath): OutFsPath {
 }
 
 function singletonPath(component: string): OutFsPath {
-  return { relativity: 0, components: [component] };
+  return relativeOutFsPath([component]);
 }
 
 /**
@@ -148,10 +158,7 @@ const [getState, _setState] = createSubstate<OutFS>("OutFS", {
  * The returned path is always an absolute path (i.e., its `relatvity` is -1).
  */
 export function outFsCwd(ctx: Context): OutFsPath {
-  return {
-    relativity: -1,
-    components: [...getState(ctx).shell.cwd],
-  };
+  return absoluteOutFsPath([...getState(ctx).shell.cwd]);
 }
 
 /**
@@ -189,7 +196,7 @@ export function Cd({ children: children_, path: path_, create = false }: {
     const initialCwd = outFsCwd(ctx);
     const shell = getState(ctx).shell;
     // Remember the old cwd.
-    priorOutDirectory = shell.cwd;
+    priorOutDirectory = [...shell.cwd];
 
     /* Now we set the new cwd */
 
@@ -202,8 +209,6 @@ export function Cd({ children: children_, path: path_, create = false }: {
 
     // Move upwards for any `..`.
     while (path.relativity > 0) {
-      path.relativity -= 1;
-
       if (shell.cwd.length > 0) {
         shell.cwd.pop();
       } else {
@@ -220,6 +225,8 @@ export function Cd({ children: children_, path: path_, create = false }: {
         ctx.error(`  ${styleOutFsPath(path)}`);
         return ctx.halt();
       }
+
+      path.relativity -= 1;
     }
 
     // Done processing the `..`, can concat the path components to the cwd.
@@ -276,7 +283,7 @@ function resolveCwd(
       logResolveFailure(ctx, path, from);
       ctx.error(
         `  ${
-          styleOutFsPath({ relativity: -1, components: currentPath })
+          styleOutFsPath(absoluteOutFsPath(currentPath))
         } is not a directory.`,
       );
       ctx.error(
@@ -300,11 +307,12 @@ function resolveCwd(
           node: new Map(),
         };
         currentNode.node.set(fst, nextNode);
+        Deno.mkdirSync(join(getState(ctx).mount, ...resolved, fst));
       } else {
-        // No, error instad of creating missing components.
+        // No, error instead of creating missing components.
         logResolveFailure(ctx, path, from);
         ctx.error(
-          `  no file ${styleOutFsPath(singletonPath(fst))} in ${resolved}`,
+          `  no file ${styleOutFsPath(singletonPath(fst))} in ${styleOutFsPath(absoluteOutFsPath(resolved))}`,
         );
         ctx.halt();
         throw "just halted";
@@ -347,10 +355,7 @@ function ensureOutNodeIsDir(
  * To be used when somethings requires path arguments for error reporting
  * but we know it cannot fail.
  */
-const dummyPath: OutFsPath = {
-  relativity: 0,
-  components: [],
-};
+const dummyPath = relativeOutFsPath([]);
 
 /**
  * Describes what to do if there is already a file of some name.
@@ -403,7 +408,7 @@ export function Dir({ name, children: children_, mode = "timid" }: {
           return <EmptyDir dir={join(state.mount, ...state.shell.cwd, name)} />;
         } else {
           return (
-            <EnsureDir dir={join(state.mount, ...state.shell.cwd, name)}>
+            <EnsureDir path={join(state.mount, ...state.shell.cwd, name)}>
             </EnsureDir>
           );
         }
@@ -465,7 +470,12 @@ export function File({ name, children: children_, mode = "timid" }: {
             node: null,
           });
           // Delete any prior version of the file from the real fs.
-          return <Remove path={join(state.mount, ...state.shell.cwd, name)} />;
+          return (
+            <>
+              <EnsureNot path={join(state.mount, ...state.shell.cwd, name)} />
+              {children}
+            </>
+          );
         } else {
           return children;
         }

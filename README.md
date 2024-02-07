@@ -8,7 +8,7 @@ output directory structures via nested macros:
   <File name="index.md">These are good recipes.</File>
   <Dir name="dessert">
     <File name="chocolate_cake.md">Mix chocolate and cake, serve in bowl.</File>
-    <File name="ice_cream.md">Put cream into freezer, then eat quickly.</File>
+    <File name="icecream.md">Put cream into freezer, then eat quickly.</File>
   </Dir>
 </Dir>;
 ```
@@ -21,30 +21,46 @@ working directory of the process):
     - index.md
     - dessert
         - chocolate_cake.md
-        - ice_cream.md
+        - icecream.md
 ```
 
-The macros also track the directory hierarchy internally. You can use relative
-and absolute paths to specify where to create files. Missing directories are
-crated automatically. Use `/` as a path separator.
+The macros internally track a "current out directory" in the directory
+hierarchy. You can change it with the `Cd` macro, to create directories and
+files elsewhere (intended less for writing by hand but more as an implementation
+detail of other macros):
 
 ```tsx
 <Dir name="recipes">
   <Dir name="dessert">
-    <File name="breadrolls.md" path="../breakfast">
-      Buy bread, roll on the floor for 48 hours.
-    </File>
-    <File name="cereals.md" path="/recipes/breakfast">
-      If you need to ask, you are doing it wrong.
-    </File>
+    {/* without the `create` flag it would not create the dir but error*/}
+    <Cd path={absoluteOutFsPath(["recipes", "breakfast"])} create>
+      <File name="breadrolls.md">
+        Buy bread, roll on the floor for 48 hours.
+      </File>
+    </Cd>
+    {/* The number gives the number of ".." at the start of the path.*/}
+    <Cd path={relativeOutFsPath(["breakfast"], 1)}>
+      <File name="cereals.md">
+        If you need a recipe, you are doing it wrong.
+      </File>
+    </Cd>
+    <File name="icecream.md">Put cream into freezer, then eat quickly.</File>
   </Dir>
 </Dir>;
 ```
 
+Produces:
+
 ```
 - recipes
     - dessert
+      - icecream.md
     - breakfast
         - breadrolls.md
         - cereals.md
 ```
+
+The `Dir` and `File` macros take an optional `mode` prop to guide what happens
+if a file already exists: `"timid"` is the default mode, it halts evaluation
+with an error. `"placid"` leaves any preexisting file of the same name
+untouched. `"assertive"` overwrites any preexisting file of the same name.
