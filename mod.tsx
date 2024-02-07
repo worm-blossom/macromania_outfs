@@ -1,27 +1,25 @@
 import {
-  EmptyDir,
-  EnsureDir,
+  Context,
+  createSubstate,
+  DebuggingInformation,
+  Expression,
   Expressions,
   expressions,
+  styleDebuggingInformation,
+} from "./deps.ts";
+import {
+  EmptyDir,
+  EnsureDir,
   Remove,
   Symlink as FsSymlink,
   WriteTextFile,
 } from "./deps.ts";
-import {
-  Colors,
-  Context,
-  createSubstate,
-  DebuggingInformation,
-  existsSync,
-  Expression,
-  join,
-  styleDebuggingInformation,
-} from "./deps.ts";
+import { Colors, join } from "./deps.ts";
 
 /**
  * The outfs macros an in-memory hierarchy of paths, the *OutFs*.
- * Each Node in the OutFS is a directory, a leaf file (we do not store the
- * contents in memory), or a symlink.
+ * Each Node in the OutFS is a directory, or a leaf file (we do not store the
+ * contents in memory).
  * For each node, we track the macro that created it for debugging purposes.
  */
 type OutFsNode = {
@@ -31,8 +29,7 @@ type OutFsNode = {
 
 type OutFsNode_ =
   | OutFile
-  | OutDir
-  | OutSymlink;
+  | OutDir;
 
 /**
  * We store no data with files in the OutFs, we merrely track their existence.
@@ -47,15 +44,7 @@ function isOutFile(n: OutFsNode_): n is OutFile {
  */
 type OutDir = Map<string, OutFsNode>;
 function isOutDir(n: OutFsNode_): n is OutDir {
-  return !(isOutFile(n) || isOutSymlink(n));
-}
-
-/**
- * A symlink is represented by an absolute path from the root to its source.
- */
-type OutSymlink = string[];
-function isOutSymlink(n: OutFsNode_): n is OutSymlink {
-  return Array.isArray(n);
+  return n !== null;
 }
 
 /**
@@ -299,13 +288,6 @@ function resolveCwd(
       throw "just halted";
     }
 
-    if (isOutSymlink(currentNode.node)) {
-      // We are dealing with a symlink. Simply replace the cwd up to the
-      // symlink with its target, and recursively attempt resolving again.
-      shell.cwd = [...currentNode.node, ...rest];
-      return resolveCwd(ctx, create, path, from);
-    }
-
     // Neither leaf file nor symlink, so we are in a directory.
     // Look up the next path component.
     let nextNode = currentNode.node.get(fst);
@@ -371,19 +353,25 @@ const dummyPath: OutFsPath = {
 };
 
 /**
+ * Describes what to do if there is already a file of some name.
+ *   - `"timid"`: Log error and halt.
+ *   - `"placid"`: Do nothing if there is already a file/directory of this name.
+ *   - `"assertive"`: Create a new empty directory at this name, no matter what.
+ */
+export type Mode = "timid" | "placid" | "assertive";
+
+/**
  * Create a directory in the current out directory, and `cd` there.
  *
  * @param name - The name of the directory to create.
- * @param mode - What to do if there is already a file at this name.
- *   - `"timid"`: Log error and halt. The default if unspecified.
- *   - `"placid"`: Do nothing if there is already a file/directory of this name.
- *   - `"assertive"`: Create a new empty directory at this name, no matter what.
+ * @param mode - What to do if there is already a file at this name. defaults
+ * to `"timid"`.
  * @param children - Expressions to evaluate in the new directory.
  * @returns The evaluated children.
  */
 export function Dir({ name, children: children_, mode = "timid" }: {
   name: string;
-  mode?: "timid" | "placid" | "assertive";
+  mode?: Mode;
   children?: Expressions;
 }): Expression {
   const children = expressions(children_);
@@ -404,36 +392,7 @@ export function Dir({ name, children: children_, mode = "timid" }: {
           outFsCwd(ctx),
         );
 
-        let createNewDir = true;
-
-        // Add a new directory to the current directory.
-        if (outDir.has(name)) {
-          // We already have a node at this name.
-
-          if (mode === "timid") {
-            // Immediately error out.
-            ctx.error(
-              `Cannot create ${styleOutFsPath(singletonPath(name))} in ${
-                styleOutFsPath(outFsCwd(ctx))
-              }`,
-            );
-            ctx.error(
-              `  File ${styleOutFsPath(singletonPath(name))} already exists.`,
-            );
-            ctx.error(
-              `  Created at ${
-                styleDebuggingInformation(outDir.get(name)!.source)
-              }`,
-            );
-            return ctx.halt();
-          } else if (mode === "placid") {
-            createNewDir = false;
-          } else {
-            // We are "assertive", so no need adjust our behavior.
-          }
-        }
-
-        if (createNewDir) {
+        if (shouldAddNode(ctx, outDir, mode, name)) {
           // Time to create an empty directory:
           // in the logical OutFs...
           outDir.set(name, {
@@ -467,16 +426,14 @@ export function Dir({ name, children: children_, mode = "timid" }: {
  * Create a file in current out directory, write the evaluated children there.
  *
  * @param name - The name of the file to create.
- * @param mode - What to do if there is already a file at this name.
- *   - `"timid"`: Log error and halt. The default if unspecified.
- *   - `"placid"`: Do nothing if there is already a file/directory of this name.
- *   - `"assertive"`: Overwrite whatever came before.
+ * @param mode - What to do if there is already a file at this name. Defaults to
+ * `"timid"`.
  * @param children - Expressions to evaluate to form the file contents.
  * @returns The evaluated children.
  */
 export function File({ name, children: children_, mode = "timid" }: {
   name: string;
-  mode?: "timid" | "placid" | "assertive";
+  mode?: Mode;
   children?: Expressions;
 }): Expression {
   const children = expressions(children_);
@@ -499,32 +456,7 @@ export function File({ name, children: children_, mode = "timid" }: {
           outFsCwd(ctx),
         );
 
-        // Add the file to the current directory.
-        if (outDir.has(name)) {
-          // We already have a node at this name.
-
-          if (mode === "timid") {
-            // Immediately error out.
-            ctx.error(
-              `Cannot create ${styleOutFsPath(singletonPath(name))} in ${
-                styleOutFsPath(outFsCwd(ctx))
-              }`,
-            );
-            ctx.error(
-              `  File ${styleOutFsPath(singletonPath(name))} already exists.`,
-            );
-            ctx.error(
-              `  Created at ${
-                styleDebuggingInformation(outDir.get(name)!.source)
-              }`,
-            );
-            return ctx.halt();
-          } else if (mode === "placid") {
-            createNewFile = false;
-          } else {
-            // We are "assertive", so no need adjust our behavior.
-          }
-        }
+        createNewFile = shouldAddNode(ctx, outDir, mode, name);
 
         if (createNewFile) {
           // Create the file in the logical OutFs.
@@ -561,119 +493,37 @@ export function File({ name, children: children_, mode = "timid" }: {
   );
 }
 
-/**
- * Create a file in current out directory, write the evaluated children there.
- *
- * @param newname - name of the symlink in the current out directory.
- * @param oldpath - Path in the current out directory to which the simlink
- * should point.
- * @param mode - What to do if there is already a file at this name.
- *   - `"timid"`: Log error and halt. The default if unspecified.
- *   - `"placid"`: Do nothing if there is already a file/directory of this name.
- *   - `"assertive"`: Overwrite whatever came before.
- * @returns The empty string.
- */
-export function Symlink({ newname, oldpath, mode = "timid" }: {
-  newname: string;
-  oldpath: OutFsPath;
-  mode?: "timid" | "placid" | "assertive";
-}): Expression {
-  let createNewSymlink = true;
-  let resolvedOldPath = dummyPath;
+function shouldAddNode(
+  ctx: Context,
+  outDir: OutDir,
+  mode: Mode,
+  name: string,
+): boolean {
+  // Add a new directory to the current directory.
+  if (outDir.has(name)) {
+    // We already have a node at this name.
 
-  // First, create the symlink in the OutFS.
-  const createTheSymlink = (
-    <impure
-      fun={(ctx: Context) => {
-        const state = getState(ctx);
-
-        // Get the current directory (cannot fail).
-        const node = resolveCwd(ctx, false, dummyPath, dummyPath);
-        const outDir = ensureOutNodeIsDir(
-          ctx,
-          node,
-          dummyPath,
-          dummyPath,
-          outFsCwd(ctx),
-        );
-
-        // Add the file to the current directory.
-        if (outDir.has(newname)) {
-          // We already have a node at this name.
-
-          if (mode === "timid") {
-            // Immediately error out.
-            ctx.error(
-              `Cannot create ${styleOutFsPath(singletonPath(newname))} in ${
-                styleOutFsPath(outFsCwd(ctx))
-              }`,
-            );
-            ctx.error(
-              `  File ${
-                styleOutFsPath(singletonPath(newname))
-              } already exists.`,
-            );
-            ctx.error(
-              `  Created at ${
-                styleDebuggingInformation(outDir.get(newname)!.source)
-              }`,
-            );
-            return ctx.halt();
-          } else if (mode === "placid") {
-            createNewSymlink = false;
-          } else {
-            // We are "assertive", so no need adjust our behavior.
-          }
-        }
-
-        if (createNewSymlink) {
-          // Create the file in the logical OutFs.
-          outDir.set(newname, {
-            source: ctx.getCurrentDebuggingInformation(),
-            node: 42,
-          });
-          // Delete any prior version of the file from the real fs.
-          return (
-            <Remove path={join(state.mount, ...state.shell.cwd, newname)} />
-          );
-        } else {
-          return "";
-        }
-      }}
-    />
-  );
-
-  return (
-    <map
-      fun={(_evaled: string, _ctx: Context) => {
-        if (createNewSymlink) {
-          return (
-            <impure
-              fun={(ctx: Context) => {
-                const state = getState(ctx);
-
-                // Create in the real fs once its oldpath exists there.
-                if (
-                  existsSync(join(state.mount, ...resolvedOldPath.components))
-                ) {
-                  return (
-                    <FsSymlink
-                      newpath={join(state.mount, ...state.shell.cwd, newname)}
-                      oldpath={join(state.mount, ...resolvedOldPath.components)}
-                    />
-                  );
-                } else {
-                  return null;
-                }
-              }}
-            />
-          );
-        } else {
-          return "";
-        }
-      }}
-    >
-      {createTheSymlink}
-    </map>
-  );
+    if (mode === "timid") {
+      // Immediately error out.
+      ctx.error(
+        `Cannot create ${styleOutFsPath(singletonPath(name))} in ${
+          styleOutFsPath(outFsCwd(ctx))
+        }`,
+      );
+      ctx.error(
+        `  File ${styleOutFsPath(singletonPath(name))} already exists.`,
+      );
+      ctx.error(
+        `  Created at ${styleDebuggingInformation(outDir.get(name)!.source)}`,
+      );
+      ctx.halt();
+      throw "unreachable";
+    } else if (mode === "placid") {
+      return false;
+    } else {
+      return true;
+    }
+  } else {
+    return true;
+  }
 }
