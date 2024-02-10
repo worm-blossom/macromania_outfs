@@ -8,6 +8,9 @@ import {
 import { Context, Expression, Expressions, expressions } from "../deps.ts";
 import { assertEquals } from "../devDeps.ts";
 import { join } from "../deps.ts";
+import { renderOutFsPath } from "../mod.tsx";
+import { outCwd } from "../mod.tsx";
+import { outFilename } from "../mod.tsx";
 
 type ExpectedNode = ExpectedDir | string;
 
@@ -32,7 +35,7 @@ function assertFsNode(path: string, expected: ExpectedNode, del = true) {
 }
 
 function cleanup(path: string) {
-  Deno.removeSync(path, {recursive: true});
+  Deno.removeSync(path, { recursive: true });
 }
 
 Deno.test("basic usage", () => {
@@ -64,6 +67,56 @@ Deno.test("basic usage", () => {
         {
           name: "icecream.md",
           node: "Put cream into freezer, then eat quickly.",
+        },
+      ],
+    },
+  ];
+  assertFsNode("recipes", expected);
+});
+
+Deno.test("cwd and filename", () => {
+  function showPathAndFile(): Expression {
+    return (
+      <impure
+        fun={(ctx) => {
+          return `${renderOutFsPath(outCwd(ctx))};${outFilename(ctx)}`;
+        }}
+      />
+    );
+  }
+  const ctx = new Context();
+  const got = ctx.evaluate(
+    <>
+      {showPathAndFile()}
+      <omnomnom>
+        <Dir name="recipes">
+          <File name="index.md">{showPathAndFile()}</File>
+          <Dir name="dessert">
+            <File name="chocolate_cake.md">
+              {showPathAndFile()}
+            </File>
+            <File name="icecream.md">
+              {showPathAndFile()}
+            </File>
+          </Dir>
+        </Dir>,
+      </omnomnom>
+    </>,
+  );
+  assertEquals(got, `/;null`);
+
+  const expected = [
+    { name: "index.md", node: `/recipes;index.md` },
+    {
+      name: "dessert",
+      node: [
+        {
+          name: "chocolate_cake.md",
+          node: `/recipes/dessert;chocolate_cake.md`,
+        },
+        {
+          name: "icecream.md",
+          node: `/recipes/dessert;icecream.md`,
         },
       ],
     },
@@ -266,7 +319,6 @@ Deno.test("dir placid 2", () => {
   assertEquals(ctx.didWarnOrWorse(), true);
   cleanup("a");
 });
-
 
 Deno.test("dir timid", () => {
   const ctx = new Context();

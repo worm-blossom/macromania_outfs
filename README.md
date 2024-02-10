@@ -25,9 +25,29 @@ working directory of the process):
 ```
 
 The macros internally track a "current out directory" in the directory
-hierarchy. You can change it with the `Cd` macro, to create directories and
-files elsewhere (intended less for writing by hand but more as an implementation
-detail of other macros):
+hierarchy. Use the `outCwd` and `outFilename` functions to access the current
+position from other macros.
+
+```tsx
+<Dir name="foo">
+  {/* evaluates to `/foo;null`*/}
+  <impure fun={(ctx) => {
+    return `${renderOutFsPath(outCwd(ctx))};${outFilename(ctx)}`;
+  }} />
+  <Dir name="bar">
+    <File name="baz.txt">
+      {/* evaluates to `/foo/bar;baz.txt`*/}
+      <impure fun={(ctx) => {
+        return `${renderOutFsPath(outCwd(ctx))};${outFilename(ctx)}`;
+      }} />
+    </File>
+  </Dir>
+</Dir>
+```
+
+You can change the current out directory with the `Cd` macro, to create
+directories and files outside the current position (intended less for writing by
+hand but more as an implementation detail of other macros):
 
 ```tsx
 <Dir name="recipes">

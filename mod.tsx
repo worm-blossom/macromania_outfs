@@ -42,12 +42,13 @@ function isOutDir(n: OutFsNode_): n is OutDir {
 }
 
 /**
- * The macros further maintain a notion of a cwd in the OutFs. The cwd and the
- * OutFs together form the *OutShell*.
+ * The macros further maintain a notion of a cwd in the OutFs, and track
+ * the name of the currently evaluated `File`, if any.
  */
 type OutShell = {
   root: OutDir;
   cwd: string[];
+  filename: string | null;
 };
 
 /**
@@ -103,7 +104,9 @@ export function renderOutFsPath(p: OutFsPath): string {
   dots.fill("..");
   const parents = dots.join("/");
 
-  return `${parents}${p.relativity > 0 && p.components.length > 0 ? "/" : ""}${p.components.join("/")}`;
+  return `${parents}${p.relativity > 0 && p.components.length > 0 ? "/" : ""}${
+    p.components.join("/")
+  }`;
 }
 
 /**
@@ -148,6 +151,7 @@ const [getState, _setState] = createSubstate<OutFS>("OutFS", {
   shell: {
     root: new Map(),
     cwd: [],
+    filename: null,
   },
   mount: Deno.cwd(),
 });
@@ -157,8 +161,16 @@ const [getState, _setState] = createSubstate<OutFS>("OutFS", {
  *
  * The returned path is always an absolute path (i.e., its `relatvity` is -1).
  */
-export function outFsCwd(ctx: Context): OutFsPath {
+export function outCwd(ctx: Context): OutFsPath {
   return absoluteOutFsPath([...getState(ctx).shell.cwd]);
+}
+
+/**
+ * Get the name of the current file, or `null` if called outside of any `File`
+ * macro invocation.
+ */
+export function outFilename(ctx: Context): string | null {
+  return getState(ctx).shell.filename;
 }
 
 /**
@@ -193,7 +205,7 @@ export function Cd({ children: children_, path: path_, create = false }: {
   // Remember the prior out dir to the current one, then update the
   // actual state to the new ones.
   const pre = (ctx: Context) => {
-    const initialCwd = outFsCwd(ctx);
+    const initialCwd = outCwd(ctx);
     const shell = getState(ctx).shell;
     // Remember the old cwd.
     priorOutDirectory = [...shell.cwd];
@@ -234,7 +246,7 @@ export function Cd({ children: children_, path: path_, create = false }: {
 
     // Trigger an error if the resulting cwd is invalid for any reason.
     const node = resolveCwd(ctx, create, path_, initialCwd);
-    const _ = ensureOutNodeIsDir(ctx, node, path_, initialCwd, outFsCwd(ctx));
+    const _ = ensureOutNodeIsDir(ctx, node, path_, initialCwd, outCwd(ctx));
   };
 
   return <lifecycle pre={pre} post={post}>{children}</lifecycle>;
@@ -312,7 +324,9 @@ function resolveCwd(
         // No, error instead of creating missing components.
         logResolveFailure(ctx, path, from);
         ctx.error(
-          `  no file ${styleOutFsPath(singletonPath(fst))} in ${styleOutFsPath(absoluteOutFsPath(resolved))}`,
+          `  no file ${styleOutFsPath(singletonPath(fst))} in ${
+            styleOutFsPath(absoluteOutFsPath(resolved))
+          }`,
         );
         ctx.halt();
         throw "just halted";
@@ -394,7 +408,7 @@ export function Dir({ name, children: children_, mode = "timid" }: {
           node,
           dummyPath,
           dummyPath,
-          outFsCwd(ctx),
+          outCwd(ctx),
         );
 
         if (shouldAddNode(ctx, outDir, mode, name)) {
@@ -458,7 +472,7 @@ export function File({ name, children: children_, mode = "timid" }: {
           node,
           dummyPath,
           dummyPath,
-          outFsCwd(ctx),
+          outCwd(ctx),
         );
 
         createNewFile = shouldAddNode(ctx, outDir, mode, name);
@@ -483,23 +497,36 @@ export function File({ name, children: children_, mode = "timid" }: {
     />
   );
 
+  let priorFilename: string | null = "";
+
   return (
-    <map
-      fun={(evaled: string, ctx: Context) => {
-        if (createNewFile) {
-          const state = getState(ctx);
-          return (
-            <WriteTextFile path={join(state.mount, ...state.shell.cwd, name)}>
-              {evaled}
-            </WriteTextFile>
-          );
-        } else {
-          return evaled;
-        }
+    <lifecycle
+      pre={(ctx) => {
+        const shell = getState(ctx).shell;
+        priorFilename = shell.filename;
+        shell.filename = name;
+      }}
+      post={(ctx) => {
+        getState(ctx).shell.filename = priorFilename;
       }}
     >
-      {createTheFile}
-    </map>
+      <map
+        fun={(evaled: string, ctx: Context) => {
+          if (createNewFile) {
+            const state = getState(ctx);
+            return (
+              <WriteTextFile path={join(state.mount, ...state.shell.cwd, name)}>
+                {evaled}
+              </WriteTextFile>
+            );
+          } else {
+            return evaled;
+          }
+        }}
+      >
+        {createTheFile}
+      </map>
+    </lifecycle>
   );
 }
 
@@ -517,7 +544,7 @@ function shouldAddNode(
       // Immediately error out.
       ctx.error(
         `Cannot create ${styleOutFsPath(singletonPath(name))} in ${
-          styleOutFsPath(outFsCwd(ctx))
+          styleOutFsPath(outCwd(ctx))
         }`,
       );
       ctx.error(
