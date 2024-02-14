@@ -1,5 +1,6 @@
 import {
   Context,
+  createLogger,
   createSubstate,
   DebuggingInformation,
   Expression,
@@ -10,9 +11,13 @@ import {
 import { EmptyDir, EnsureDir, EnsureNot, WriteTextFile } from "./deps.ts";
 import { Colors, join } from "./deps.ts";
 
+const l = createLogger("OutFsLogger");
+const ConfigMacro = l.ConfigMacro;
+export { ConfigMacro as OutFsLogger };
+
 /**
  * The outfs macros an in-memory hierarchy of paths, the *OutFs*.
- * Each Node in the OutFS is a directory, or a leaf file (we do not store the
+ * Each Node in the OutFs is a directory, or a leaf file (we do not store the
  * contents in memory).
  * For each node, we track the macro that created it for debugging purposes.
  */
@@ -147,7 +152,7 @@ type OutFS = {
   mount: string;
 };
 
-const [getState, _setState] = createSubstate<OutFS>("OutFS", {
+const [getState, _setState] = createSubstate<OutFS>({
   shell: {
     root: new Map(),
     cwd: [],
@@ -226,15 +231,19 @@ export function Cd({ children: children_, path: path_, create = false }: {
       } else {
         const dotdot = styleOutFsPath({ relativity: 1, components: [] });
         logResolveFailure(ctx, path_, initialCwd);
-        ctx.error(
-          `  Reached the root of the out fs after processing ${
-            path_.relativity - path.relativity
-          } many ${dotdot}`,
-        );
-        ctx.error(
-          `  But the remaining path has ${path.relativity} more ${dotdot}:`,
-        );
-        ctx.error(`  ${styleOutFsPath(path)}`);
+        l.logGroup(ctx, () => {
+          l.error(
+            ctx,
+            `Reached the root of the out fs after processing ${
+              path_.relativity - path.relativity
+            } many ${dotdot}`,
+          );
+          l.error(
+            ctx,
+            `But the remaining path has ${path.relativity} more ${dotdot}:`,
+          );
+          l.error(ctx, `${styleOutFsPath(path)}`);
+        });
         return ctx.halt();
       }
 
@@ -253,9 +262,11 @@ export function Cd({ children: children_, path: path_, create = false }: {
 }
 
 function logResolveFailure(ctx: Context, path: OutFsPath, from: OutFsPath) {
-  ctx.error(`Failed to resolve OutFsPath to a directory.`);
-  ctx.error(`  path: ${styleOutFsPath(path)}`);
-  ctx.error(`  from out_pwd: ${styleOutFsPath(from)}`);
+  l.error(ctx, `Failed to resolve OutFsPath to a directory.`);
+  l.logGroup(ctx, () => {
+    l.error(ctx, `path: ${styleOutFsPath(path)}`);
+    l.error(ctx, `from out_pwd: ${styleOutFsPath(from)}`);
+  });
 }
 
 /**
@@ -293,16 +304,20 @@ function resolveCwd(
       // We have reached a leaf file, yet the path still has more components.
       // Time to error out.
       logResolveFailure(ctx, path, from);
-      ctx.error(
-        `  ${
-          styleOutFsPath(absoluteOutFsPath(currentPath))
-        } is not a directory.`,
-      );
-      ctx.error(
-        `  The non-directory was created at ${
-          styleDebuggingInformation(currentNode.source)
-        }`,
-      );
+      l.logGroup(ctx, () => {
+        l.error(
+          ctx,
+          `${
+            styleOutFsPath(absoluteOutFsPath(currentPath))
+          } is not a directory.`,
+        );
+        l.error(
+          ctx,
+          `The non-directory was created at ${
+            styleDebuggingInformation(currentNode.source)
+          }`,
+        );
+      });
       ctx.halt();
       throw "just halted";
     }
@@ -323,7 +338,8 @@ function resolveCwd(
       } else {
         // No, error instead of creating missing components.
         logResolveFailure(ctx, path, from);
-        ctx.error(
+        l.error(
+          ctx,
           `  no file ${styleOutFsPath(singletonPath(fst))} in ${
             styleOutFsPath(absoluteOutFsPath(resolved))
           }`,
@@ -357,9 +373,11 @@ function ensureOutNodeIsDir(
     return node.node;
   } else {
     logResolveFailure(ctx, path, from);
-    ctx.error(`  The path resolved not to a directory but to a file:`);
-    ctx.error(`  ${styleOutFsPath(resolved)}`);
-    ctx.error(`  File created at ${styleDebuggingInformation(node.source)}`);
+    l.logGroup(ctx, () => {
+      l.error(ctx, `The path resolved not to a directory but to a file:`);
+      l.error(ctx, `${styleOutFsPath(resolved)}`);
+      l.error(ctx, `File created at ${styleDebuggingInformation(node.source)}`);
+    });
     ctx.halt();
     throw "just halted";
   }
@@ -491,7 +509,7 @@ export function File({ name, children: children_, mode = "timid" }: {
             </>
           );
         } else {
-          return children;
+          return <fragment exps={children} />;
         }
       }}
     />
@@ -542,17 +560,22 @@ function shouldAddNode(
 
     if (mode === "timid") {
       // Immediately error out.
-      ctx.error(
+      l.error(
+        ctx,
         `Cannot create ${styleOutFsPath(singletonPath(name))} in ${
           styleOutFsPath(outCwd(ctx))
         }`,
       );
-      ctx.error(
-        `  File ${styleOutFsPath(singletonPath(name))} already exists.`,
-      );
-      ctx.error(
-        `  Created at ${styleDebuggingInformation(outDir.get(name)!.source)}`,
-      );
+      l.logGroup(ctx, () => {
+        l.error(
+          ctx,
+          `File ${styleOutFsPath(singletonPath(name))} already exists.`,
+        );
+        l.error(
+          ctx,
+          `Created at ${styleDebuggingInformation(outDir.get(name)!.source)}`,
+        );
+      });
       ctx.halt();
       throw "unreachable";
     } else if (mode === "placid") {
