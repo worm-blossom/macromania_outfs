@@ -258,14 +258,14 @@ export function Cd({ children: children_, path: path_, create = false }: {
     const _ = ensureOutNodeIsDir(ctx, node, path_, initialCwd, outCwd(ctx));
   };
 
-  return <lifecycle pre={pre} post={post}>{children}</lifecycle>;
+  return <lifecycle pre={pre} post={post}><fragment exps={children}/></lifecycle>;
 }
 
 function logResolveFailure(ctx: Context, path: OutFsPath, from: OutFsPath) {
   l.error(ctx, `Failed to resolve OutFsPath to a directory.`);
   l.logGroup(ctx, () => {
     l.error(ctx, `path: ${styleOutFsPath(path)}`);
-    l.error(ctx, `from out_pwd: ${styleOutFsPath(from)}`);
+    l.error(ctx, `from out-cwd: ${styleOutFsPath(from)}`);
   });
 }
 
@@ -451,7 +451,7 @@ export function Dir({ name, children: children_, mode = "timid" }: {
   return (
     <map
       fun={(_: string, _ctx: Context) => {
-        return <Cd path={singletonPath(name)}>{children}</Cd>;
+        return <Cd path={singletonPath(name)}><fragment exps={children}/></Cd>;
       }}
     >
       {createTheDir}
@@ -505,7 +505,7 @@ export function File({ name, children: children_, mode = "timid" }: {
           return (
             <>
               <EnsureNot path={join(state.mount, ...state.shell.cwd, name)} />
-              {children}
+              <fragment exps={children} />
             </>
           );
         } else {

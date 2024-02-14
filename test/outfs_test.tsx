@@ -186,12 +186,12 @@ Deno.test("cd non-creative", async () => {
   assertEquals(didWarnOrWorse(ctx), true);
 });
 
-Deno.test("cd out of root", () => {
+Deno.test("cd out of root", async () => {
   const ctx = new Context();
-  const got = ctx.evaluate(
+  const got = await ctx.evaluate(
     <Cd path={relativeOutFsPath(["foo"], 1)}></Cd>,
   );
-  assertEquals(got === null, true);
+  assertEquals(got, null);
   assertEquals(didWarnOrWorse(ctx), true);
 });
 
