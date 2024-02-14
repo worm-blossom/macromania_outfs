@@ -5,7 +5,7 @@ import {
   File,
   relativeOutFsPath,
 } from "../mod.tsx";
-import { Context, Expression, Expressions, expressions } from "../deps.ts";
+import { Context, Expression, Expressions, expressions, didWarnOrWorse } from "../deps.ts";
 import { assertEquals } from "../devDeps.ts";
 import { join } from "../deps.ts";
 import { renderOutFsPath } from "../mod.tsx";
@@ -38,9 +38,9 @@ function cleanup(path: string) {
   Deno.removeSync(path, { recursive: true });
 }
 
-Deno.test("basic usage", () => {
+Deno.test("basic usage", async () => {
   const ctx = new Context();
-  const got = ctx.evaluate(
+  const got = await ctx.evaluate(
     <Dir name="recipes">
       <File name="index.md">These are good recipes.</File>
       <Dir name="dessert">
@@ -74,7 +74,7 @@ Deno.test("basic usage", () => {
   assertFsNode("recipes", expected);
 });
 
-Deno.test("cwd and filename", () => {
+Deno.test("cwd and filename", async () => {
   function showPathAndFile(): Expression {
     return (
       <impure
@@ -85,7 +85,7 @@ Deno.test("cwd and filename", () => {
     );
   }
   const ctx = new Context();
-  const got = ctx.evaluate(
+  const got = await ctx.evaluate(
     <>
       {showPathAndFile()}
       <omnomnom>
@@ -124,9 +124,9 @@ Deno.test("cwd and filename", () => {
   assertFsNode("recipes", expected);
 });
 
-Deno.test("cd usage", () => {
+Deno.test("cd usage", async () => {
   const ctx = new Context();
-  const got = ctx.evaluate(
+  const got = await ctx.evaluate(
     <Dir name="recipes">
       <Dir name="dessert">
         {/* without the `create` flag it would not create the dir but error*/}
@@ -177,13 +177,13 @@ Deno.test("cd usage", () => {
   assertFsNode("recipes", expected);
 });
 
-Deno.test("cd non-creative", () => {
+Deno.test("cd non-creative", async () => {
   const ctx = new Context();
-  const got = ctx.evaluate(
+  const got = await ctx.evaluate(
     <Cd path={relativeOutFsPath(["foo"])}></Cd>,
   );
   assertEquals(got === null, true);
-  assertEquals(ctx.didWarnOrWorse(), true);
+  assertEquals(didWarnOrWorse(ctx), true);
 });
 
 Deno.test("cd out of root", () => {
@@ -192,12 +192,12 @@ Deno.test("cd out of root", () => {
     <Cd path={relativeOutFsPath(["foo"], 1)}></Cd>,
   );
   assertEquals(got === null, true);
-  assertEquals(ctx.didWarnOrWorse(), true);
+  assertEquals(didWarnOrWorse(ctx), true);
 });
 
-Deno.test("file assertive", () => {
+Deno.test("file assertive", async () => {
   const ctx = new Context();
-  const got = ctx.evaluate(
+  const got = await ctx.evaluate(
     <Dir name="a">
       <File name="b">x</File>
       <File name="b" mode="assertive">y</File>
@@ -211,9 +211,9 @@ Deno.test("file assertive", () => {
   assertFsNode("a", expected);
 });
 
-Deno.test("file placid", () => {
+Deno.test("file placid", async () => {
   const ctx = new Context();
-  const got = ctx.evaluate(
+  const got = await ctx.evaluate(
     <Dir name="a">
       <File name="b">x</File>
       <File name="b" mode="placid">y</File>
@@ -227,35 +227,35 @@ Deno.test("file placid", () => {
   assertFsNode("a", expected);
 });
 
-Deno.test("file timid", () => {
+Deno.test("file timid", async () => {
   const ctx = new Context();
-  const got = ctx.evaluate(
+  const got = await ctx.evaluate(
     <Dir name="a">
       <File name="b">x</File>
       <File name="b" mode="timid">y</File>
     </Dir>,
   );
   assertEquals(got === null, true);
-  assertEquals(ctx.didWarnOrWorse(), true);
+  assertEquals(didWarnOrWorse(ctx), true);
   cleanup("a");
 });
 
-Deno.test("file default is timid", () => {
+Deno.test("file default is timid", async () => {
   const ctx = new Context();
-  const got = ctx.evaluate(
+  const got = await ctx.evaluate(
     <Dir name="a">
       <File name="b">x</File>
       <File name="b">y</File>
     </Dir>,
   );
   assertEquals(got === null, true);
-  assertEquals(ctx.didWarnOrWorse(), true);
+  assertEquals(didWarnOrWorse(ctx), true);
   cleanup("a");
 });
 
-Deno.test("dir assertive", () => {
+Deno.test("dir assertive", async () => {
   const ctx = new Context();
-  const got = ctx.evaluate(
+  const got = await ctx.evaluate(
     <Dir name="a">
       <Dir name="b">
         <File name="c">x</File>
@@ -278,9 +278,9 @@ Deno.test("dir assertive", () => {
   assertFsNode("a", expected);
 });
 
-Deno.test("dir placid 1", () => {
+Deno.test("dir placid 1", async () => {
   const ctx = new Context();
-  const got = ctx.evaluate(
+  const got = await ctx.evaluate(
     <Dir name="a">
       <Dir name="b">
         <File name="c">x</File>
@@ -303,9 +303,9 @@ Deno.test("dir placid 1", () => {
   assertFsNode("a", expected);
 });
 
-Deno.test("dir placid 2", () => {
+Deno.test("dir placid 2", async () => {
   const ctx = new Context();
-  const got = ctx.evaluate(
+  const got = await ctx.evaluate(
     <Dir name="a">
       <Dir name="b">
         <File name="c">x</File>
@@ -316,13 +316,13 @@ Deno.test("dir placid 2", () => {
     </Dir>,
   );
   assertEquals(got === null, true);
-  assertEquals(ctx.didWarnOrWorse(), true);
+  assertEquals(didWarnOrWorse(ctx), true);
   cleanup("a");
 });
 
-Deno.test("dir timid", () => {
+Deno.test("dir timid", async () => {
   const ctx = new Context();
-  const got = ctx.evaluate(
+  const got = await ctx.evaluate(
     <Dir name="a">
       <Dir name="b">
         <File name="c">x</File>
@@ -331,13 +331,13 @@ Deno.test("dir timid", () => {
     </Dir>,
   );
   assertEquals(got === null, true);
-  assertEquals(ctx.didWarnOrWorse(), true);
+  assertEquals(didWarnOrWorse(ctx), true);
   cleanup("a");
 });
 
-Deno.test("dir default is timid", () => {
+Deno.test("dir default is timid", async () => {
   const ctx = new Context();
-  const got = ctx.evaluate(
+  const got = await ctx.evaluate(
     <Dir name="a">
       <Dir name="b">
         <File name="c">x</File>
@@ -346,6 +346,6 @@ Deno.test("dir default is timid", () => {
     </Dir>,
   );
   assertEquals(got === null, true);
-  assertEquals(ctx.didWarnOrWorse(), true);
+  assertEquals(didWarnOrWorse(ctx), true);
   cleanup("a");
 });
