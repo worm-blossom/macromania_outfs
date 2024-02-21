@@ -11,9 +11,9 @@ import {
 import { EmptyDir, EnsureDir, EnsureNot, WriteTextFile } from "./deps.ts";
 import { Colors, join } from "./deps.ts";
 
-const l = createLogger("OutFsLogger");
+const l = createLogger("LoggerOutFs");
 const ConfigMacro = l.ConfigMacro;
-export { ConfigMacro as OutFsLogger };
+export { ConfigMacro as LoggerOutFs };
 
 /**
  * The outfs macros an in-memory hierarchy of paths, the *OutFs*.
@@ -160,6 +160,13 @@ const [getState, _setState] = createSubstate<OutFS>({
   },
   mount: Deno.cwd(),
 });
+
+/**
+ * Get the mount point of the OutFs as a platform-dependent absolute path.
+ */
+export function outMount(ctx: Context): string {
+  return getState(ctx).mount;
+}
 
 /**
  * Get the current out directory as an `OutFsPath`.
