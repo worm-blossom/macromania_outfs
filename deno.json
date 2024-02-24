@@ -3,8 +3,8 @@
     "display": "Deno",
   
     "imports": {
-      "macromaniajsx/jsx-dev-runtime": "https://deno.land/x/macromania@v0.1.0/mod.ts",
-      "macromaniajsx/jsx-runtime": "https://deno.land/x/macromania@v0.1.0/mod.ts",
+      "macromaniajsx/jsx-dev-runtime": "./deps.ts",
+      "macromaniajsx/jsx-runtime": "./deps.ts",
     },
   
     "compilerOptions": {

@@ -152,14 +152,14 @@ type OutFS = {
   mount: string;
 };
 
-const [getState, _setState] = createSubstate<OutFS>({
+const [getState, _setState] = createSubstate<OutFS>(() => ({
   shell: {
     root: new Map(),
     cwd: [],
     filename: null,
   },
   mount: Deno.cwd(),
-});
+}));
 
 /**
  * Get the mount point of the OutFs as a platform-dependent absolute path.
