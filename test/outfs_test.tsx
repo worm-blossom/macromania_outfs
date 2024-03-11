@@ -6,7 +6,7 @@ import {
   relativeOutFsPath,
 } from "../mod.tsx";
 import { Context, Expression, Expressions, expressions, didWarnOrWorse } from "../deps.ts";
-import { assertEquals } from "../devDeps.ts";
+import { assertEquals, assertFs } from "../devDeps.ts";
 import { join } from "../deps.ts";
 import { renderOutFsPath } from "../mod.tsx";
 import { outCwd } from "../mod.tsx";
@@ -348,4 +348,17 @@ Deno.test("dir default is timid", async () => {
   assertEquals(got === null, true);
   assertEquals(didWarnOrWorse(ctx), true);
   cleanup("a");
+});
+
+Deno.test("disabling `clean` prop works", async () => {
+  const ctx = new Context();
+  const got = await ctx.evaluate(
+    <Dir name="testNoClean" mode="assertive" clean={false}>
+      <File name="B">b</File>
+    </Dir>,
+  );
+  assertEquals(got != null, true);
+  await assertFs("testNoClean", "expectedNoClean");
+
+  await Deno.remove("testNoClean/B");
 });

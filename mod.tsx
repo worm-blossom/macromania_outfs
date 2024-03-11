@@ -137,6 +137,57 @@ function singletonPath(component: string): OutFsPath {
 }
 
 /**
+ * Resolve `path` to an absolute path, by applying it to the current working
+ * directory. Halts if the resolution process involves leaving the root.
+ *
+ * Does not check whether files actually exist, this is purely syntactic path
+ * manipulation.
+ *
+ * If `path` is absolute, simply returns it directly.
+ */
+export function resolveRelativePath(
+  ctx: Context,
+  path: OutFsPath,
+): OutFsPath {
+  if (path.relativity === -1) {
+    return path;
+  }
+
+  const shell = getState(ctx).shell;
+  const startPath = [...shell.cwd];
+
+  // We resolve the path by iteratively resolving the first path component.
+  let currentPath = [...startPath];
+
+  let relativity = path.relativity;
+  while (relativity > 0) {
+    if (currentPath.length > 0) {
+      relativity -= 1;
+      currentPath = currentPath.slice(1);
+    } else {
+      const dotdot = styleOutFsPath({ relativity: 1, components: [] });
+      logResolveFailure(ctx, path, absoluteOutFsPath(startPath));
+      l.logGroup(ctx, () => {
+        l.error(
+          ctx,
+          `Reached the root of the out fs after processing ${
+            path.relativity - relativity
+          } many ${dotdot}`,
+        );
+        l.error(
+          ctx,
+          `But the remaining path has ${path.relativity} more ${dotdot}:`,
+        );
+        l.error(ctx, `${styleOutFsPath(path)}`);
+      });
+      ctx.halt();
+    }
+  }
+
+  return absoluteOutFsPath([...currentPath, ...path.components]);
+}
+
+/**
  * The substate for this family of macros.
  */
 type OutFS = {
@@ -183,6 +234,19 @@ export function outCwd(ctx: Context): OutFsPath {
  */
 export function outFilename(ctx: Context): string | null {
   return getState(ctx).shell.filename;
+}
+
+export function outFullPath(ctx: Context): OutFsPath {
+  const filename = outFilename(ctx);
+  const cwd = outCwd(ctx);
+
+  if (filename === null) {
+    return cwd;
+  } else {
+    const ret = cloneOutFsPath(cwd);
+    ret.components.push(filename);
+    return ret;
+  }
 }
 
 /**
@@ -265,7 +329,11 @@ export function Cd({ children: children_, path: path_, create = false }: {
     const _ = ensureOutNodeIsDir(ctx, node, path_, initialCwd, outCwd(ctx));
   };
 
-  return <lifecycle pre={pre} post={post}><fragment exps={children}/></lifecycle>;
+  return (
+    <lifecycle pre={pre} post={post}>
+      <fragment exps={children} />
+    </lifecycle>
+  );
 }
 
 function logResolveFailure(ctx: Context, path: OutFsPath, from: OutFsPath) {
@@ -410,12 +478,15 @@ export type Mode = "timid" | "placid" | "assertive";
  * @param name - The name of the directory to create.
  * @param mode - What to do if there is already a file at this name. defaults
  * to `"timid"`.
+ * @param clean - Whether to initially clean out the contents of the directory
+ * on the file system. Defaults to **`true`**.
  * @param children - Expressions to evaluate in the new directory.
  * @returns The evaluated children.
  */
-export function Dir({ name, children: children_, mode = "timid" }: {
+export function Dir({ name, children: children_, mode = "timid", clean = true }: {
   name: string;
   mode?: Mode;
+  clean?: boolean;
   children?: Expressions;
 }): Expression {
   const children = expressions(children_);
@@ -444,7 +515,8 @@ export function Dir({ name, children: children_, mode = "timid" }: {
             node: new Map(),
           });
           // ... and on the real file system.
-          return <EmptyDir dir={join(state.mount, ...state.shell.cwd, name)} />;
+          const path = join(state.mount, ...state.shell.cwd, name);
+          return clean ? <EmptyDir dir={path} /> : <EnsureDir path={path} />;
         } else {
           return (
             <EnsureDir path={join(state.mount, ...state.shell.cwd, name)}>
@@ -458,7 +530,11 @@ export function Dir({ name, children: children_, mode = "timid" }: {
   return (
     <map
       fun={(_: string, _ctx: Context) => {
-        return <Cd path={singletonPath(name)}><fragment exps={children}/></Cd>;
+        return (
+          <Cd path={singletonPath(name)}>
+            <fragment exps={children} />
+          </Cd>
+        );
       }}
     >
       {createTheDir}
